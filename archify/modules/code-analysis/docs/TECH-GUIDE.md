@@ -121,7 +121,7 @@ The implementation lookup depends on an internal TypeScript option, so dependenc
 
 ### Why not dependency-cruiser or Babel
 
-They only give import edges. The symbol and call graphs in M2 need references and calls, which the TS API yields in the same traversal, so there is no need for a second parser.
+The adapter reuses its TypeScript Program and traversal for import edges, function measurements and conservative lexical call facts. It does not add another parser or resolver for this evidence. The explicit `js-ts-lexical-v1` call model and its unsupported cases are described in [Architecture](../ARCHITECTURE.md#jsts-call-facts); complete symbol and call graphs remain unimplemented.
 
 ### Where it bites
 
