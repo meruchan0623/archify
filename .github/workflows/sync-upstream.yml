@@ -1,0 +1,70 @@
+name: Rebase onto upstream
+
+on:
+  schedule:
+    - cron: '23 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream-main
+  cancel-in-progress: false
+
+jobs:
+  rebase:
+    if: github.repository == 'meruchan0623/archify'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Fetch and rebase while preserving fork commits
+        shell: bash
+        env:
+          GIT_TERMINAL_PROMPT: '0'
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git fetch --no-tags origin main
+          git checkout -B sync-upstream refs/remotes/origin/main
+          previous=$(git rev-parse HEAD)
+          git remote add upstream https://github.com/tt-a1i/archify.git
+          git fetch --no-tags upstream main
+          upstream=$(git rev-parse refs/remotes/upstream/main)
+
+          if git merge-base --is-ancestor "$upstream" HEAD; then
+            echo 'Fork already contains the latest upstream commit.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          if ! git rebase refs/remotes/upstream/main; then
+            {
+              echo '### Rebase stopped: conflicts require manual resolution'
+              echo 'The remote fork has not been changed. Conflicting files:'
+              git diff --name-only --diff-filter=U
+            } >> "$GITHUB_STEP_SUMMARY"
+            git rebase --abort
+            exit 1
+          fi
+
+          # Rebuild the template from the rebased authoritative Viewer sources.
+          node scripts/generate-viewer.mjs
+          node scripts/generate-viewer.mjs --check
+          if ! git diff --quiet -- archify/assets/template.html; then
+            git add archify/assets/template.html
+            git commit -m 'build: regenerate viewer after upstream rebase'
+          fi
+          git diff --check
+          git push --force-with-lease="refs/heads/main:$previous" origin HEAD:refs/heads/main
+          {
+            echo '### Upstream rebase completed'
+            echo "Upstream: $upstream"
+            echo "Fork: $(git rev-parse HEAD)"
+            echo 'Custom commits were replayed. The push used an explicit lease to protect concurrent edits.'
+          } >> "$GITHUB_STEP_SUMMARY"
