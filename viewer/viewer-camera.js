@@ -434,6 +434,8 @@
         var maxScale = options.maxScale || (options.includeNeighbors ? 1.9 : 2.15);
         var targetScale = Math.min((right - left) / bounds.width, (bottom - top) / bounds.height) * 0.9;
         targetScale = Math.max(1, Math.min(maxScale, targetScale));
+        // Ease the zoom increment by 10% while the relationship lens is open.
+        if (chip && !chip.hidden) targetScale = 1 + (targetScale - 1) * 0.9;
         if (targetScale < 1.08) targetScale = 1;
         var target = {
           scale: Math.round(targetScale * 100) / 100,
