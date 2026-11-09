@@ -5,8 +5,10 @@ on:
     - cron: '23 * * * *'
   workflow_dispatch:
 
+# The built-in token cannot update workflows. Keep it read-only and use the
+# repository-scoped SYNC_UPSTREAM_TOKEN only for the final push.
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: sync-upstream-main
@@ -18,12 +20,24 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      - name: Check sync credential
+        shell: bash
+        env:
+          SYNC_UPSTREAM_TOKEN: ${{ secrets.SYNC_UPSTREAM_TOKEN }}
+        run: |
+          if [[ -z "$SYNC_UPSTREAM_TOKEN" ]]; then
+            echo '::error::Set the SYNC_UPSTREAM_TOKEN repository secret to a fine-grained token for this repository with Contents and Workflows read/write permissions.'
+            exit 1
+          fi
+
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: main
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Fetch and rebase while preserving fork commits
+        id: rebase
         shell: bash
         env:
           GIT_TERMINAL_PROMPT: '0'
@@ -61,10 +75,28 @@ jobs:
             git commit -m 'build: regenerate viewer after upstream rebase'
           fi
           git diff --check
-          git push --force-with-lease="refs/heads/main:$previous" origin HEAD:refs/heads/main
+          {
+            echo 'changed=true'
+            echo "previous=$previous"
+            echo "upstream=$upstream"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Push rebased main with workflow permission
+        if: steps.rebase.outputs.changed == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_UPSTREAM_TOKEN }}
+          GIT_TERMINAL_PROMPT: '0'
+          PREVIOUS: ${{ steps.rebase.outputs.previous }}
+          UPSTREAM: ${{ steps.rebase.outputs.upstream }}
+        run: |
+          set -euo pipefail
+          # Use a command-scoped helper: never save the token in the checkout.
+          git -c credential.helper= -c 'credential.helper=!gh auth git-credential' \
+            push --force-with-lease="refs/heads/main:$PREVIOUS" origin HEAD:refs/heads/main
           {
             echo '### Upstream rebase completed'
-            echo "Upstream: $upstream"
+            echo "Upstream: $UPSTREAM"
             echo "Fork: $(git rev-parse HEAD)"
             echo 'Custom commits were replayed. The push used an explicit lease to protect concurrent edits.'
           } >> "$GITHUB_STEP_SUMMARY"
